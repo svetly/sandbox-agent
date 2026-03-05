@@ -72,15 +72,13 @@ describe("Integration: TypeScript SDK flat session API", () => {
 
   beforeAll(async () => {
     dataHome = mkdtempSync(join(tmpdir(), "sdk-integration-"));
-    prepareMockAgentDataHome(dataHome);
+    const agentEnv = prepareMockAgentDataHome(dataHome);
 
     handle = await spawnSandboxAgent({
       enabled: true,
       log: "silent",
       timeoutMs: 30000,
-      env: {
-        XDG_DATA_HOME: dataHome,
-      },
+      env: agentEnv,
     });
     baseUrl = handle.baseUrl;
     token = handle.token;
