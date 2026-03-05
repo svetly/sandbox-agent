@@ -33,13 +33,30 @@ pub(super) async fn require_token(
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "));
 
-    if bearer == Some(expected.as_str()) {
+    let allow_query_token = request.uri().path().ends_with("/terminal/ws");
+    let query_token = if allow_query_token {
+        request
+            .uri()
+            .query()
+            .and_then(|query| query_param(query, "access_token"))
+    } else {
+        None
+    };
+
+    if bearer == Some(expected.as_str()) || query_token.as_deref() == Some(expected.as_str()) {
         return Ok(next.run(request).await);
     }
 
     Err(ApiError::Sandbox(SandboxError::TokenInvalid {
         message: Some("missing or invalid bearer token".to_string()),
     }))
+}
+
+fn query_param(query: &str, key: &str) -> Option<String> {
+    query
+        .split('&')
+        .filter_map(|part| part.split_once('='))
+        .find_map(|(k, v)| if k == key { Some(v.to_string()) } else { None })
 }
 
 pub(super) type PinBoxSseStream = crate::acp_proxy_runtime::PinBoxSseStream;
@@ -497,8 +514,16 @@ pub(super) fn problem_from_sandbox_error(error: &SandboxError) -> ProblemDetails
     let mut problem = error.to_problem_details();
 
     match error {
-        SandboxError::InvalidRequest { .. } => {
-            problem.status = 400;
+        SandboxError::InvalidRequest { message } => {
+            if message.starts_with("process not found:") {
+                problem.status = 404;
+                problem.title = "Not Found".to_string();
+            } else if message.starts_with("input payload exceeds maxInputBytesPerRequest") {
+                problem.status = 413;
+                problem.title = "Payload Too Large".to_string();
+            } else {
+                problem.status = 400;
+            }
         }
         SandboxError::Timeout { .. } => {
             problem.status = 504;
