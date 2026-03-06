@@ -67,6 +67,7 @@ interface SandboxAgentConnectCommonOptions {
   persist?: SessionPersistDriver;
   replayMaxEvents?: number;
   replayMaxChars?: number;
+  signal?: AbortSignal;
   token?: string;
   waitForHealth?: boolean | SandboxAgentHealthWaitOptions;
 }
@@ -452,6 +453,7 @@ export class SandboxAgent {
   private readonly fetcher: typeof fetch;
   private readonly defaultHeaders?: HeadersInit;
   private readonly healthWait: NormalizedHealthWaitOptions;
+  private readonly healthWaitAbortController = new AbortController();
 
   private readonly persist: SessionPersistDriver;
   private readonly replayMaxEvents: number;
@@ -482,7 +484,7 @@ export class SandboxAgent {
     }
     this.fetcher = resolvedFetch;
     this.defaultHeaders = options.headers;
-    this.healthWait = normalizeHealthWaitOptions(options.waitForHealth);
+    this.healthWait = normalizeHealthWaitOptions(options.waitForHealth, options.signal);
     this.persist = options.persist ?? new InMemorySessionPersistDriver();
 
     this.replayMaxEvents = normalizePositiveInt(options.replayMaxEvents, DEFAULT_REPLAY_MAX_EVENTS);
@@ -522,6 +524,7 @@ export class SandboxAgent {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    this.healthWaitAbortController.abort(createAbortError("SandboxAgent was disposed."));
 
     const connections = [...this.liveConnections.values()];
     this.liveConnections.clear();
@@ -985,7 +988,7 @@ export class SandboxAgent {
 
   private async requestRaw(method: string, path: string, options: RequestOptions = {}): Promise<Response> {
     if (!options.skipReadyWait) {
-      await this.awaitHealthy();
+      await this.awaitHealthy(options.signal);
     }
 
     const url = this.buildUrl(path, options.query);
@@ -1034,18 +1037,23 @@ export class SandboxAgent {
     });
   }
 
-  private async awaitHealthy(): Promise<void> {
+  private async awaitHealthy(signal?: AbortSignal): Promise<void> {
     if (!this.healthPromise) {
+      throwIfAborted(signal);
       return;
     }
 
-    await this.healthPromise;
+    await waitForAbortable(this.healthPromise, signal);
+    throwIfAborted(signal);
     if (this.healthError) {
       throw this.healthError;
     }
   }
 
   private async runHealthWait(): Promise<void> {
+    const signal = this.healthWait.enabled
+      ? anyAbortSignal([this.healthWait.signal, this.healthWaitAbortController.signal])
+      : undefined;
     const startedAt = Date.now();
     const deadline =
       typeof this.healthWait.timeoutMs === "number" ? startedAt + this.healthWait.timeoutMs : undefined;
@@ -1055,13 +1063,21 @@ export class SandboxAgent {
     let lastError: unknown;
 
     while (!this.disposed && (deadline === undefined || Date.now() < deadline)) {
+      throwIfAborted(signal);
+
       try {
-        const health = await this.getHealth();
+        const health = await this.requestJson<HealthResponse>("GET", `${API_PREFIX}/health`, {
+          signal,
+          skipReadyWait: true,
+        });
         if (health.status === "ok") {
           return;
         }
         lastError = new Error(`Unexpected health response: ${JSON.stringify(health)}`);
       } catch (error) {
+        if (isAbortError(error)) {
+          throw error;
+        }
         lastError = error;
       }
 
@@ -1074,7 +1090,7 @@ export class SandboxAgent {
         nextLogAt = now + HEALTH_WAIT_LOG_EVERY_MS;
       }
 
-      await sleep(delayMs);
+      await sleep(delayMs, signal);
       delayMs = Math.min(HEALTH_WAIT_MAX_DELAY_MS, delayMs * 2);
     }
 
@@ -1132,8 +1148,8 @@ type RequestOptions = {
 };
 
 type NormalizedHealthWaitOptions =
-  | { enabled: false; timeoutMs?: undefined }
-  | { enabled: true; timeoutMs?: number };
+  | { enabled: false; timeoutMs?: undefined; signal?: undefined }
+  | { enabled: true; timeoutMs?: number; signal?: AbortSignal };
 
 /**
  * Auto-select and call `authenticate` based on the agent's advertised auth methods.
@@ -1297,13 +1313,14 @@ function normalizePositiveInt(value: number | undefined, fallback: number): numb
 
 function normalizeHealthWaitOptions(
   value: boolean | SandboxAgentHealthWaitOptions | undefined,
+  signal: AbortSignal | undefined,
 ): NormalizedHealthWaitOptions {
   if (value === false) {
     return { enabled: false };
   }
 
   if (value === true || value === undefined) {
-    return { enabled: true };
+    return { enabled: true, signal };
   }
 
   const timeoutMs =
@@ -1313,6 +1330,7 @@ function normalizeHealthWaitOptions(
 
   return {
     enabled: true,
+    signal,
     timeoutMs,
   };
 }
@@ -1359,6 +1377,120 @@ function formatHealthWaitError(error: unknown): string {
   return String(error);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function anyAbortSignal(signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const active = signals.filter((signal): signal is AbortSignal => Boolean(signal));
+  if (active.length === 0) {
+    return undefined;
+  }
+
+  if (active.length === 1) {
+    return active[0];
+  }
+
+  const controller = new AbortController();
+  const onAbort = (event: Event) => {
+    cleanup();
+    const signal = event.target as AbortSignal;
+    controller.abort(signal.reason ?? createAbortError());
+  };
+  const cleanup = () => {
+    for (const signal of active) {
+      signal.removeEventListener("abort", onAbort);
+    }
+  };
+
+  for (const signal of active) {
+    if (signal.aborted) {
+      controller.abort(signal.reason ?? createAbortError());
+      return controller.signal;
+    }
+  }
+
+  for (const signal of active) {
+    signal.addEventListener("abort", onAbort, { once: true });
+  }
+
+  return controller.signal;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) {
+    return;
+  }
+
+  throw signal.reason instanceof Error ? signal.reason : createAbortError(signal.reason);
+}
+
+async function waitForAbortable<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) {
+    return promise;
+  }
+
+  throwIfAborted(signal);
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(signal.reason instanceof Error ? signal.reason : createAbortError(signal.reason));
+    };
+    const cleanup = () => {
+      signal.removeEventListener("abort", onAbort);
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function createAbortError(reason?: unknown): Error {
+  if (reason instanceof Error) {
+    return reason;
+  }
+
+  const message = typeof reason === "string" ? reason : "This operation was aborted.";
+  if (typeof DOMException !== "undefined") {
+    return new DOMException(message, "AbortError");
+  }
+
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  throwIfAborted(signal);
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      cleanup();
+      reject(signal.reason instanceof Error ? signal.reason : createAbortError(signal.reason));
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }

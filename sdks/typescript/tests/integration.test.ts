@@ -243,6 +243,44 @@ describe("Integration: TypeScript SDK flat session API", () => {
     await sdk.dispose();
   });
 
+  it("aborts the shared health wait when connect signal is aborted", async () => {
+    const controller = new AbortController();
+    const customFetch: typeof fetch = async (input, init) => {
+      const outgoing = new Request(input, init);
+      const parsed = new URL(outgoing.url);
+
+      if (parsed.pathname !== "/v1/health") {
+        throw new Error(`Unexpected request path during abort test: ${parsed.pathname}`);
+      }
+
+      return new Promise<Response>((_resolve, reject) => {
+        const onAbort = () => {
+          outgoing.signal.removeEventListener("abort", onAbort);
+          reject(outgoing.signal.reason ?? new DOMException("Connect aborted", "AbortError"));
+        };
+
+        if (outgoing.signal.aborted) {
+          onAbort();
+          return;
+        }
+
+        outgoing.signal.addEventListener("abort", onAbort, { once: true });
+      });
+    };
+
+    const sdk = await SandboxAgent.connect({
+      token,
+      fetch: customFetch,
+      signal: controller.signal,
+    });
+
+    const pending = sdk.listAgents();
+    controller.abort(new DOMException("Connect aborted", "AbortError"));
+
+    await expect(pending).rejects.toThrow("Connect aborted");
+    await sdk.dispose();
+  });
+
   it("restores a session on stale connection by recreating and replaying history on first prompt", async () => {
     const persist = new InMemorySessionPersistDriver({
       maxEventsPerSession: 200,
