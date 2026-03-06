@@ -91,7 +91,7 @@ Set the model, mode, or thought level on a session at creation time or after:
 const session = await sdk.createSession({
   agent: "codex",
   model: "gpt-5.3-codex",
-  mode: "plan",
+  mode: "auto",
   thoughtLevel: "high",
 });
 ```
@@ -99,7 +99,7 @@ const session = await sdk.createSession({
 ```ts
 // After creation
 await session.setModel("gpt-5.2-codex");
-await session.setMode("build");
+await session.setMode("full-access");
 await session.setThoughtLevel("medium");
 ```
 

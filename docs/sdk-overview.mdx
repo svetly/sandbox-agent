@@ -111,7 +111,7 @@ const session = await sdk.createSession({
 });
 
 await session.setModel("gpt-5.2-codex");
-await session.setMode("plan");
+await session.setMode("auto");
 
 const options = await session.getConfigOptions();
 const modes = await session.getModes();
