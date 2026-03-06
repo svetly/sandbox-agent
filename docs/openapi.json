@@ -1595,13 +1595,96 @@
         }
       }
     },
+    "/v1/processes/{id}/terminal/resize": {
+      "post": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Resize a process terminal.",
+        "description": "Sets the PTY window size (columns and rows) for a tty-mode process and\nsends SIGWINCH so the child process can adapt.",
+        "operationId": "post_v1_process_terminal_resize",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Process ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProcessTerminalResizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Resize accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessTerminalResizeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown process",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not a terminal process",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Process API unsupported on this platform",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/processes/{id}/terminal/ws": {
       "get": {
         "tags": [
           "v1"
         ],
         "summary": "Open an interactive WebSocket terminal session.",
-        "description": "Upgrades the connection to a WebSocket for bidirectional PTY I/O. Accepts\n`access_token` query param for browser-based auth (WebSocket API cannot\nsend custom headers). Uses the `channel.k8s.io` binary subprotocol:\nchannel 0 stdin, channel 1 stdout, channel 3 status JSON, channel 4 resize,\nand channel 255 close.",
+        "description": "Upgrades the connection to a WebSocket for bidirectional PTY I/O. Accepts\n`access_token` query param for browser-based auth (WebSocket API cannot\nsend custom headers). Streams raw PTY output as binary frames and accepts\nJSON control frames for input, resize, and close.",
         "operationId": "get_v1_process_terminal_ws",
         "parameters": [
           {
@@ -2673,6 +2756,44 @@
           "running",
           "exited"
         ]
+      },
+      "ProcessTerminalResizeRequest": {
+        "type": "object",
+        "required": [
+          "cols",
+          "rows"
+        ],
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "ProcessTerminalResizeResponse": {
+        "type": "object",
+        "required": [
+          "cols",
+          "rows"
+        ],
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
       },
       "ServerStatus": {
         "type": "string",

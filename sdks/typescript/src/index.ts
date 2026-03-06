@@ -1,9 +1,11 @@
 export {
   LiveAcpConnection,
-  ProcessTerminalSession,
   SandboxAgent,
   SandboxAgentError,
   Session,
+  UnsupportedSessionCategoryError,
+  UnsupportedSessionConfigOptionError,
+  UnsupportedSessionValueError,
 } from "./client.ts";
 
 export { AcpRpcError } from "acp-http-client";
@@ -11,12 +13,12 @@ export { AcpRpcError } from "acp-http-client";
 export { buildInspectorUrl } from "./inspector.ts";
 
 export type {
+  SandboxAgentHealthWaitOptions,
   AgentQueryOptions,
   ProcessLogFollowQuery,
   ProcessLogListener,
   ProcessLogSubscription,
   ProcessTerminalConnectOptions,
-  ProcessTerminalSessionOptions,
   ProcessTerminalWebSocketUrlOptions,
   SandboxAgentConnectOptions,
   SandboxAgentStartOptions,
@@ -30,7 +32,6 @@ export type { InspectorUrlOptions } from "./inspector.ts";
 
 export {
   InMemorySessionPersistDriver,
-  TerminalChannel,
 } from "./types.ts";
 
 export type {
@@ -75,16 +76,18 @@ export type {
   ProcessRunResponse,
   ProcessSignalQuery,
   ProcessState,
+  ProcessTerminalClientFrame,
+  ProcessTerminalErrorFrame,
+  ProcessTerminalExitFrame,
+  ProcessTerminalReadyFrame,
+  ProcessTerminalResizeRequest,
+  ProcessTerminalResizeResponse,
+  ProcessTerminalServerFrame,
   SessionEvent,
   SessionPersistDriver,
   SessionRecord,
   SkillsConfig,
   SkillsConfigQuery,
-  TerminalErrorStatus,
-  TerminalExitStatus,
-  TerminalReadyStatus,
-  TerminalResizePayload,
-  TerminalStatusMessage,
 } from "./types.ts";
 
 export type {

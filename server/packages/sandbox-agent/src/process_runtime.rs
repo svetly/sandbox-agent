@@ -8,7 +8,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 use sandbox_agent_error::SandboxError;
 
@@ -119,7 +119,6 @@ pub struct ProcessRuntime {
 struct ProcessRuntimeInner {
     next_id: AtomicU64,
     processes: RwLock<HashMap<String, Arc<ManagedProcess>>>,
-    run_once_semaphore: Semaphore,
 }
 
 #[derive(Debug)]
@@ -183,9 +182,6 @@ impl ProcessRuntime {
             inner: Arc::new(ProcessRuntimeInner {
                 next_id: AtomicU64::new(1),
                 processes: RwLock::new(HashMap::new()),
-                run_once_semaphore: Semaphore::new(
-                    ProcessRuntimeConfig::default().max_concurrent_processes,
-                ),
             }),
         }
     }
@@ -328,14 +324,6 @@ impl ProcessRuntime {
             });
         }
 
-        let _permit =
-            self.inner
-                .run_once_semaphore
-                .try_acquire()
-                .map_err(|_| SandboxError::Conflict {
-                    message: "too many concurrent run_once operations".to_string(),
-                })?;
-
         let config = self.get_config().await;
         let mut timeout_ms = spec.timeout_ms.unwrap_or(config.default_run_timeout_ms);
         if timeout_ms == 0 {
@@ -358,6 +346,9 @@ impl ProcessRuntime {
             cmd.current_dir(cwd);
         }
 
+        if !spec.env.contains_key("TERM") {
+            cmd.env("TERM", "xterm-256color");
+        }
         for (key, value) in &spec.env {
             cmd.env(key, value);
         }
@@ -622,10 +613,6 @@ impl ProcessRuntime {
             cmd.current_dir(cwd);
         }
 
-        // Default TERM for TTY processes so tools like tmux, vim, etc. work out of the box.
-        if !spec.env.contains_key("TERM") {
-            cmd.env("TERM", "xterm-256color");
-        }
         for (key, value) in &spec.env {
             cmd.env(key, value);
         }

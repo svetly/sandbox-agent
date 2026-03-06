@@ -141,14 +141,21 @@ export interface paths {
      */
     post: operations["post_v1_process_stop"];
   };
+  "/v1/processes/{id}/terminal/resize": {
+    /**
+     * Resize a process terminal.
+     * @description Sets the PTY window size (columns and rows) for a tty-mode process and
+     * sends SIGWINCH so the child process can adapt.
+     */
+    post: operations["post_v1_process_terminal_resize"];
+  };
   "/v1/processes/{id}/terminal/ws": {
     /**
      * Open an interactive WebSocket terminal session.
      * @description Upgrades the connection to a WebSocket for bidirectional PTY I/O. Accepts
      * `access_token` query param for browser-based auth (WebSocket API cannot
-     * send custom headers). Uses the `channel.k8s.io` binary subprotocol:
-     * channel 0 stdin, channel 1 stdout, channel 3 status JSON, channel 4 resize,
-     * and channel 255 close.
+     * send custom headers). Streams raw PTY output as binary frames and accepts
+     * JSON control frames for input, resize, and close.
      */
     get: operations["get_v1_process_terminal_ws"];
   };
@@ -423,6 +430,18 @@ export interface components {
     };
     /** @enum {string} */
     ProcessState: "running" | "exited";
+    ProcessTerminalResizeRequest: {
+      /** Format: int32 */
+      cols: number;
+      /** Format: int32 */
+      rows: number;
+    };
+    ProcessTerminalResizeResponse: {
+      /** Format: int32 */
+      cols: number;
+      /** Format: int32 */
+      rows: number;
+    };
     /** @enum {string} */
     ServerStatus: "running" | "stopped";
     ServerStatusInfo: {
@@ -1325,12 +1344,61 @@ export interface operations {
     };
   };
   /**
+   * Resize a process terminal.
+   * @description Sets the PTY window size (columns and rows) for a tty-mode process and
+   * sends SIGWINCH so the child process can adapt.
+   */
+  post_v1_process_terminal_resize: {
+    parameters: {
+      path: {
+        /** @description Process ID */
+        id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ProcessTerminalResizeRequest"];
+      };
+    };
+    responses: {
+      /** @description Resize accepted */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProcessTerminalResizeResponse"];
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Unknown process */
+      404: {
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Not a terminal process */
+      409: {
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Process API unsupported on this platform */
+      501: {
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  /**
    * Open an interactive WebSocket terminal session.
    * @description Upgrades the connection to a WebSocket for bidirectional PTY I/O. Accepts
    * `access_token` query param for browser-based auth (WebSocket API cannot
-   * send custom headers). Uses the `channel.k8s.io` binary subprotocol:
-   * channel 0 stdin, channel 1 stdout, channel 3 status JSON, channel 4 resize,
-   * and channel 255 close.
+   * send custom headers). Streams raw PTY output as binary frames and accepts
+   * JSON control frames for input, resize, and close.
    */
   get_v1_process_terminal_ws: {
     parameters: {

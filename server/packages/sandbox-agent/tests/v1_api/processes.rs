@@ -3,16 +3,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use futures::{SinkExt, StreamExt};
 use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::Message;
-
-const CHANNEL_K8S_IO_PROTOCOL: &str = "channel.k8s.io";
-const CH_STDIN: u8 = 0;
-const CH_STDOUT: u8 = 1;
-const CH_STATUS: u8 = 3;
-const CH_RESIZE: u8 = 4;
-const CH_CLOSE: u8 = 255;
 
 async fn wait_for_exited(test_app: &TestApp, process_id: &str) {
     for _ in 0..30 {
@@ -55,19 +46,6 @@ async fn recv_ws_message(
         .expect("timed out waiting for websocket frame")
         .expect("websocket stream ended")
         .expect("websocket frame")
-}
-
-fn make_channel_frame(channel: u8, payload: impl AsRef<[u8]>) -> Vec<u8> {
-    let payload = payload.as_ref();
-    let mut frame = Vec::with_capacity(payload.len() + 1);
-    frame.push(channel);
-    frame.extend_from_slice(payload);
-    frame
-}
-
-fn parse_channel_frame(bytes: &[u8]) -> (u8, &[u8]) {
-    let (&channel, payload) = bytes.split_first().expect("channel frame");
-    (channel, payload)
 }
 
 #[tokio::test]
@@ -544,71 +522,42 @@ async fn v1_process_terminal_ws_e2e_is_deterministic() {
     let process_id = create_body["id"].as_str().expect("process id").to_string();
 
     let ws_url = live_server.ws_url(&format!("/v1/processes/{process_id}/terminal/ws"));
-    let mut ws_request = ws_url.into_client_request().expect("ws request");
-    ws_request.headers_mut().insert(
-        "Sec-WebSocket-Protocol",
-        HeaderValue::from_static(CHANNEL_K8S_IO_PROTOCOL),
-    );
-    let (mut ws, response) = connect_async(ws_request).await.expect("connect websocket");
-    assert_eq!(
-        response
-            .headers()
-            .get("Sec-WebSocket-Protocol")
-            .and_then(|value| value.to_str().ok()),
-        Some(CHANNEL_K8S_IO_PROTOCOL)
-    );
+    let (mut ws, _) = connect_async(&ws_url).await.expect("connect websocket");
 
     let ready = recv_ws_message(&mut ws).await;
-    let ready_bytes = ready.into_data();
-    let (ready_channel, ready_payload) = parse_channel_frame(&ready_bytes);
-    assert_eq!(ready_channel, CH_STATUS);
-    let ready_payload: Value = serde_json::from_slice(ready_payload).expect("ready json");
+    let ready_payload: Value =
+        serde_json::from_str(ready.to_text().expect("ready text frame")).expect("ready json");
     assert_eq!(ready_payload["type"], "ready");
     assert_eq!(ready_payload["processId"], process_id);
 
-    ws.send(Message::Binary(
-        make_channel_frame(CH_STDIN, b"hello from ws\n").into(),
+    ws.send(Message::Text(
+        json!({
+            "type": "input",
+            "data": "hello from ws\n"
+        })
+        .to_string(),
     ))
     .await
     .expect("send input frame");
 
-    ws.send(Message::Binary(
-        make_channel_frame(CH_RESIZE, br#"{"cols":120,"rows":40}"#).into(),
-    ))
-    .await
-    .expect("send resize frame");
-
-    let mut saw_stdout = false;
+    let mut saw_binary_output = false;
     let mut saw_exit = false;
-    let mut saw_close = false;
     for _ in 0..10 {
         let frame = recv_ws_message(&mut ws).await;
         match frame {
             Message::Binary(bytes) => {
-                let (channel, payload) = parse_channel_frame(&bytes);
-                match channel {
-                    CH_STDOUT => {
-                        let text = String::from_utf8_lossy(payload);
-                        if text.contains("got:hello from ws") {
-                            saw_stdout = true;
-                        }
-                    }
-                    CH_STATUS => {
-                        let payload: Value =
-                            serde_json::from_slice(payload).expect("ws status json");
-                        if payload["type"] == "exit" {
-                            saw_exit = true;
-                        } else {
-                            assert_ne!(payload["type"], "error");
-                        }
-                    }
-                    CH_CLOSE => {
-                        assert!(payload.is_empty(), "close channel payload must be empty");
-                        saw_close = true;
-                        break;
-                    }
-                    other => panic!("unexpected websocket channel: {other}"),
+                let text = String::from_utf8_lossy(&bytes);
+                if text.contains("got:hello from ws") {
+                    saw_binary_output = true;
                 }
+            }
+            Message::Text(text) => {
+                let payload: Value = serde_json::from_str(&text).expect("ws json");
+                if payload["type"] == "exit" {
+                    saw_exit = true;
+                    break;
+                }
+                assert_ne!(payload["type"], "error");
             }
             Message::Close(_) => break,
             Message::Ping(_) | Message::Pong(_) => {}
@@ -616,9 +565,11 @@ async fn v1_process_terminal_ws_e2e_is_deterministic() {
         }
     }
 
-    assert!(saw_stdout, "expected pty stdout over websocket");
-    assert!(saw_exit, "expected exit status frame over websocket");
-    assert!(saw_close, "expected close channel frame over websocket");
+    assert!(
+        saw_binary_output,
+        "expected pty binary output over websocket"
+    );
+    assert!(saw_exit, "expected exit control frame over websocket");
 
     let _ = ws.close(None).await;
 
@@ -668,38 +619,19 @@ async fn v1_process_terminal_ws_auth_e2e() {
     let auth_ws_url = live_server.ws_url(&format!(
         "/v1/processes/{process_id}/terminal/ws?access_token={token}"
     ));
-    let mut ws_request = auth_ws_url.into_client_request().expect("ws request");
-    ws_request.headers_mut().insert(
-        "Sec-WebSocket-Protocol",
-        HeaderValue::from_static(CHANNEL_K8S_IO_PROTOCOL),
-    );
-    let (mut ws, response) = connect_async(ws_request)
+    let (mut ws, _) = connect_async(&auth_ws_url)
         .await
         .expect("authenticated websocket handshake");
-    assert_eq!(
-        response
-            .headers()
-            .get("Sec-WebSocket-Protocol")
-            .and_then(|value| value.to_str().ok()),
-        Some(CHANNEL_K8S_IO_PROTOCOL)
-    );
 
     let ready = recv_ws_message(&mut ws).await;
-    let ready_bytes = ready.into_data();
-    let (ready_channel, ready_payload) = parse_channel_frame(&ready_bytes);
-    assert_eq!(ready_channel, CH_STATUS);
-    let ready_payload: Value = serde_json::from_slice(ready_payload).expect("ready json");
+    let ready_payload: Value =
+        serde_json::from_str(ready.to_text().expect("ready text frame")).expect("ready json");
     assert_eq!(ready_payload["type"], "ready");
     assert_eq!(ready_payload["processId"], process_id);
 
     let _ = ws
-        .send(Message::Binary(make_channel_frame(CH_CLOSE, []).into()))
+        .send(Message::Text(json!({ "type": "close" }).to_string()))
         .await;
-    let close = recv_ws_message(&mut ws).await;
-    let close_bytes = close.into_data();
-    let (close_channel, close_payload) = parse_channel_frame(&close_bytes);
-    assert_eq!(close_channel, CH_CLOSE);
-    assert!(close_payload.is_empty());
     let _ = ws.close(None).await;
 
     let kill_response = http

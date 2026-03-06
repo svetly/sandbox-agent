@@ -1,4 +1,9 @@
-import type { AnyMessage, NewSessionRequest } from "acp-http-client";
+import type {
+  AnyMessage,
+  NewSessionRequest,
+  SessionConfigOption,
+  SessionModeState,
+} from "acp-http-client";
 import type { components, operations } from "./generated/openapi.ts";
 
 export type ProblemDetails = components["schemas"]["ProblemDetails"];
@@ -46,40 +51,43 @@ export type ProcessRunRequest = JsonRequestBody<operations["post_v1_processes_ru
 export type ProcessRunResponse = JsonResponse<operations["post_v1_processes_run"], 200>;
 export type ProcessSignalQuery = QueryParams<operations["post_v1_process_stop"]>;
 export type ProcessState = components["schemas"]["ProcessState"];
+export type ProcessTerminalResizeRequest = JsonRequestBody<operations["post_v1_process_terminal_resize"]>;
+export type ProcessTerminalResizeResponse = JsonResponse<operations["post_v1_process_terminal_resize"], 200>;
 
-export const TerminalChannel = {
-  stdin: 0,
-  stdout: 1,
-  stderr: 2,
-  status: 3,
-  resize: 4,
-  close: 255,
-} as const;
+export type ProcessTerminalClientFrame =
+  | {
+      type: "input";
+      data: string;
+      encoding?: string;
+    }
+  | {
+      type: "resize";
+      cols: number;
+      rows: number;
+    }
+  | {
+      type: "close";
+    };
 
-export interface TerminalReadyStatus {
+export interface ProcessTerminalReadyFrame {
   type: "ready";
   processId: string;
 }
 
-export interface TerminalExitStatus {
+export interface ProcessTerminalExitFrame {
   type: "exit";
   exitCode?: number | null;
 }
 
-export interface TerminalErrorStatus {
+export interface ProcessTerminalErrorFrame {
   type: "error";
   message: string;
 }
 
-export type TerminalStatusMessage =
-  | TerminalReadyStatus
-  | TerminalExitStatus
-  | TerminalErrorStatus;
-
-export interface TerminalResizePayload {
-  cols: number;
-  rows: number;
-}
+export type ProcessTerminalServerFrame =
+  | ProcessTerminalReadyFrame
+  | ProcessTerminalExitFrame
+  | ProcessTerminalErrorFrame;
 
 export interface SessionRecord {
   id: string;
@@ -89,6 +97,8 @@ export interface SessionRecord {
   createdAt: number;
   destroyedAt?: number;
   sessionInit?: Omit<NewSessionRequest, "_meta">;
+  configOptions?: SessionConfigOption[];
+  modes?: SessionModeState | null;
 }
 
 export type SessionEventSender = "client" | "agent";
@@ -228,6 +238,12 @@ function cloneSessionRecord(session: SessionRecord): SessionRecord {
     sessionInit: session.sessionInit
       ? (JSON.parse(JSON.stringify(session.sessionInit)) as SessionRecord["sessionInit"])
       : undefined,
+    configOptions: session.configOptions
+      ? (JSON.parse(JSON.stringify(session.configOptions)) as SessionRecord["configOptions"])
+      : undefined,
+    modes: session.modes
+      ? (JSON.parse(JSON.stringify(session.modes)) as SessionRecord["modes"])
+      : session.modes,
   };
 }
 

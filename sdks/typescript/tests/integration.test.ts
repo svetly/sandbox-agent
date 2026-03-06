@@ -136,6 +136,22 @@ function writeTarChecksum(buffer: Buffer, checksum: number): void {
   buffer[155] = 0x20;
 }
 
+function decodeSocketPayload(data: unknown): string {
+  if (typeof data === "string") {
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data).toString("utf8");
+  }
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+  }
+  if (typeof Blob !== "undefined" && data instanceof Blob) {
+    throw new Error("Blob socket payloads are not supported in this test");
+  }
+  throw new Error(`Unsupported socket payload type: ${typeof data}`);
+}
+
 function decodeProcessLogData(data: string, encoding: string): string {
   if (encoding === "base64") {
     return Buffer.from(data, "base64").toString("utf8");
@@ -158,15 +174,13 @@ describe("Integration: TypeScript SDK flat session API", () => {
 
   beforeAll(async () => {
     dataHome = mkdtempSync(join(tmpdir(), "sdk-integration-"));
-    prepareMockAgentDataHome(dataHome);
+    const agentEnv = prepareMockAgentDataHome(dataHome);
 
     handle = await spawnSandboxAgent({
       enabled: true,
       log: "silent",
       timeoutMs: 30000,
-      env: {
-        XDG_DATA_HOME: dataHome,
-      },
+      env: agentEnv,
     });
     baseUrl = handle.baseUrl;
     token = handle.token;
@@ -323,6 +337,111 @@ describe("Integration: TypeScript SDK flat session API", () => {
     );
   });
 
+  it("waits for health before non-ACP HTTP helpers", async () => {
+    const defaultFetch = globalThis.fetch;
+    if (!defaultFetch) {
+      throw new Error("Global fetch is not available in this runtime.");
+    }
+
+    let healthAttempts = 0;
+    const seenPaths: string[] = [];
+    const customFetch: typeof fetch = async (input, init) => {
+      const outgoing = new Request(input, init);
+      const parsed = new URL(outgoing.url);
+      seenPaths.push(parsed.pathname);
+
+      if (parsed.pathname === "/v1/health") {
+        healthAttempts += 1;
+        if (healthAttempts < 3) {
+          return new Response("warming up", { status: 503 });
+        }
+      }
+
+      const forwardedUrl = new URL(`${parsed.pathname}${parsed.search}`, baseUrl);
+      const forwarded = new Request(forwardedUrl.toString(), outgoing);
+      return defaultFetch(forwarded);
+    };
+
+    const sdk = await SandboxAgent.connect({
+      token,
+      fetch: customFetch,
+    });
+
+    const agents = await sdk.listAgents();
+    expect(Array.isArray(agents.agents)).toBe(true);
+    expect(healthAttempts).toBe(3);
+
+    const firstAgentsRequest = seenPaths.indexOf("/v1/agents");
+    expect(firstAgentsRequest).toBeGreaterThanOrEqual(0);
+    expect(seenPaths.slice(0, firstAgentsRequest)).toEqual([
+      "/v1/health",
+      "/v1/health",
+      "/v1/health",
+    ]);
+
+    await sdk.dispose();
+  });
+
+  it("surfaces health timeout when a request awaits readiness", async () => {
+    const customFetch: typeof fetch = async (input, init) => {
+      const outgoing = new Request(input, init);
+      const parsed = new URL(outgoing.url);
+
+      if (parsed.pathname === "/v1/health") {
+        return new Response("warming up", { status: 503 });
+      }
+
+      throw new Error(`Unexpected request path during timeout test: ${parsed.pathname}`);
+    };
+
+    const sdk = await SandboxAgent.connect({
+      token,
+      fetch: customFetch,
+      waitForHealth: { timeoutMs: 100 },
+    });
+
+    await expect(sdk.listAgents()).rejects.toThrow("Timed out waiting for sandbox-agent health");
+    await sdk.dispose();
+  });
+
+  it("aborts the shared health wait when connect signal is aborted", async () => {
+    const controller = new AbortController();
+    const customFetch: typeof fetch = async (input, init) => {
+      const outgoing = new Request(input, init);
+      const parsed = new URL(outgoing.url);
+
+      if (parsed.pathname !== "/v1/health") {
+        throw new Error(`Unexpected request path during abort test: ${parsed.pathname}`);
+      }
+
+      return new Promise<Response>((_resolve, reject) => {
+        const onAbort = () => {
+          outgoing.signal.removeEventListener("abort", onAbort);
+          reject(outgoing.signal.reason ?? new DOMException("Connect aborted", "AbortError"));
+        };
+
+        if (outgoing.signal.aborted) {
+          onAbort();
+          return;
+        }
+
+        outgoing.signal.addEventListener("abort", onAbort, { once: true });
+      });
+    };
+
+    const sdk = await SandboxAgent.connect({
+      token,
+      fetch: customFetch,
+      signal: controller.signal,
+    });
+
+    const pending = sdk.listAgents();
+    controller.abort(new DOMException("Connect aborted", "AbortError"));
+
+    await expect(pending).rejects.toThrow("Connect aborted");
+    await sdk.dispose();
+  });
+
   it("restores a session on stale connection by recreating and replaying history on first prompt", async () => {
     const persist = new InMemorySessionPersistDriver({
       maxEventsPerSession: 200,
@@ -397,6 +516,127 @@ describe("Integration: TypeScript SDK flat session API", () => {
 
     const events = await sdk.getEvents({ sessionId: session.id, limit: 200 });
     expect(events.items.length).toBeLessThanOrEqual(8);
+
+    await sdk.dispose();
+  });
+
+  it("blocks manual session/cancel and requires destroySession", async () => {
+    const sdk = await SandboxAgent.connect({
+      baseUrl,
+      token,
+    });
+
+    const session = await sdk.createSession({ agent: "mock" });
+
+    await expect(session.send("session/cancel")).rejects.toThrow(
+      "Use destroySession(sessionId) instead.",
+    );
+    await expect(sdk.sendSessionMethod(session.id, "session/cancel", {})).rejects.toThrow(
+      "Use destroySession(sessionId) instead.",
+    );
+
+    const destroyed = await sdk.destroySession(session.id);
+    expect(destroyed.destroyedAt).toBeDefined();
+
+    const reloaded = await sdk.getSession(session.id);
+    expect(reloaded?.destroyedAt).toBeDefined();
+
+    await sdk.dispose();
+  });
+
+  it("supports typed config helpers and createSession preconfiguration", async () => {
+    const sdk = await SandboxAgent.connect({
+      baseUrl,
+      token,
+    });
+
+    const session = await sdk.createSession({
+      agent: "mock",
+      model: "mock",
+    });
+
+    const options = await session.getConfigOptions();
+    expect(options.some((option) => option.category === "model")).toBe(true);
+
+    await expect(session.setModel("unknown-model")).rejects.toThrow("does not support value");
+
+    await sdk.dispose();
+  });
+
+  it("setModel happy path switches to a valid model", async () => {
+    const sdk = await SandboxAgent.connect({
+      baseUrl,
+      token,
+    });
+
+    const session = await sdk.createSession({ agent: "mock" });
+    await session.setModel("mock-fast");
+
+    const options = await session.getConfigOptions();
+    const modelOption = options.find((o) => o.category === "model");
+    expect(modelOption?.currentValue).toBe("mock-fast");
+
+    await sdk.dispose();
+  });
+
+  it("setMode happy path switches to a valid mode", async () => {
+    const sdk = await SandboxAgent.connect({
+      baseUrl,
+      token,
+    });
+
+    const session = await sdk.createSession({ agent: "mock" });
+    await session.setMode("plan");
+
+    const modes = await session.getModes();
+    expect(modes?.currentModeId).toBe("plan");
+
+    await sdk.dispose();
+  });
+
+  it("setThoughtLevel happy path switches to a valid thought level", async () => {
+    const sdk = await SandboxAgent.connect({
+      baseUrl,
+      token,
+    });
+
+    const session = await sdk.createSession({ agent: "mock" });
+    await session.setThoughtLevel("high");
+
+    const options = await session.getConfigOptions();
+    const thoughtOption = options.find((o) => o.category === "thought_level");
+    expect(thoughtOption?.currentValue).toBe("high");
+
+    await sdk.dispose();
+  });
+
+  it("setModel/setMode/setThoughtLevel can be changed multiple times", async () => {
+    const sdk = await SandboxAgent.connect({
+      baseUrl,
+      token,
+    });
+
+    const session = await sdk.createSession({ agent: "mock" });
+
+    // Model: mock → mock-fast → mock
+    await session.setModel("mock-fast");
+    expect((await session.getConfigOptions()).find((o) => o.category === "model")?.currentValue).toBe("mock-fast");
+    await session.setModel("mock");
+    expect((await session.getConfigOptions()).find((o) => o.category === "model")?.currentValue).toBe("mock");
+
+    // Mode: normal → plan → normal
+    await session.setMode("plan");
+    expect((await session.getModes())?.currentModeId).toBe("plan");
+    await session.setMode("normal");
+    expect((await session.getModes())?.currentModeId).toBe("normal");
+
+    // Thought level: low → high → medium → low
+    await session.setThoughtLevel("high");
+    expect((await session.getConfigOptions()).find((o) => o.category === "thought_level")?.currentValue).toBe("high");
+    await session.setThoughtLevel("medium");
+    expect((await session.getConfigOptions()).find((o) => o.category === "thought_level")?.currentValue).toBe("medium");
+    await session.setThoughtLevel("low");
+    expect((await session.getConfigOptions()).find((o) => o.category === "thought_level")?.currentValue).toBe("low");
 
     await sdk.dispose();
   });
@@ -566,53 +806,47 @@ describe("Integration: TypeScript SDK flat session API", () => {
       });
       ttyProcessId = ttyProcess.id;
 
-      const wsUrl = sdk.buildProcessTerminalWebSocketUrl(ttyProcess.id);
-      expect(wsUrl.startsWith("ws://") || wsUrl.startsWith("wss://")).toBe(true);
-
-      const session = sdk.connectProcessTerminal(ttyProcess.id, {
-        WebSocket: WebSocket as unknown as typeof globalThis.WebSocket,
-      });
-      const readyFrames: string[] = [];
-      const ttyOutput: string[] = [];
-      const exitFrames: Array<number | null | undefined> = [];
-      const terminalErrors: string[] = [];
-      let closeCount = 0;
-
-      session.onReady((status) => {
-        readyFrames.push(status.processId);
-      });
-      session.onData((bytes) => {
-        ttyOutput.push(Buffer.from(bytes).toString("utf8"));
-      });
-      session.onExit((status) => {
-        exitFrames.push(status.exitCode);
-      });
-      session.onError((error) => {
-        terminalErrors.push(error instanceof Error ? error.message : error.message);
-      });
-      session.onClose(() => {
-        closeCount += 1;
-      });
-
-      await waitFor(() => readyFrames[0]);
-
-      session.resize({
+      const resized = await sdk.resizeProcessTerminal(ttyProcess.id, {
         cols: 120,
         rows: 40,
       });
-      session.sendInput("hello tty\n");
+      expect(resized.cols).toBe(120);
+      expect(resized.rows).toBe(40);
+
+      const wsUrl = sdk.buildProcessTerminalWebSocketUrl(ttyProcess.id);
+      expect(wsUrl.startsWith("ws://") || wsUrl.startsWith("wss://")).toBe(true);
+
+      const ws = sdk.connectProcessTerminalWebSocket(ttyProcess.id, {
+        WebSocket: WebSocket as unknown as typeof globalThis.WebSocket,
+      });
+      ws.binaryType = "arraybuffer";
+
+      const socketTextFrames: string[] = [];
+      const socketBinaryFrames: string[] = [];
+      ws.addEventListener("message", (event) => {
+        if (typeof event.data === "string") {
+          socketTextFrames.push(event.data);
+          return;
+        }
+        socketBinaryFrames.push(decodeSocketPayload(event.data));
+      });
 
       await waitFor(() => {
-        const joined = ttyOutput.join("");
+        const ready = socketTextFrames.find((frame) => frame.includes('"type":"ready"'));
+        return ready;
+      });
+
+      ws.send(JSON.stringify({
+        type: "input",
+        data: "hello tty\n",
+      }));
+
+      await waitFor(() => {
+        const joined = socketBinaryFrames.join("");
         return joined.includes("hello tty") ? joined : undefined;
       });
 
-      session.close();
-      await session.closed;
-      expect(closeCount).toBeGreaterThan(0);
-      expect(exitFrames).toHaveLength(0);
-      expect(terminalErrors).toEqual([]);
-
+      ws.close();
       await waitForAsync(async () => {
         const processInfo = await sdk.getProcess(ttyProcess.id);
         return processInfo.status === "running" ? processInfo : undefined;
