@@ -5,12 +5,12 @@ sidebarTitle: "Processes"
 icon: "terminal"
 ---
 
-The process API lets you run one-shot commands, spawn long-lived processes, stream logs, and open interactive terminal sessions over WebSocket.
+The process API supports:
 
 - **One-shot execution** — run a command to completion and capture stdout, stderr, and exit code
 - **Managed processes** — spawn, list, stop, kill, and delete long-lived processes
 - **Log streaming** — fetch buffered logs or follow live output via SSE
-- **Interactive terminals** — full PTY support with bidirectional WebSocket I/O
+- **Terminals** — full PTY support with bidirectional WebSocket I/O
 - **Configurable limits** — control concurrency, timeouts, and buffer sizes per runtime
 
 ## Run a command
@@ -91,16 +91,6 @@ curl -X POST "http://127.0.0.1:2468/v1/processes" \
 ```
 </CodeGroup>
 
-Set `tty: true` to allocate a pseudo-terminal (required for interactive programs like vim or tmux):
-
-```ts TypeScript
-const proc = await sdk.createProcess({
-  command: "bash",
-  tty: true,
-  interactive: true,
-});
-```
-
 ### List and get
 
 <CodeGroup>
@@ -179,9 +169,16 @@ sub.close();
 await sub.closed;
 ```
 
-## Interactive terminals
+## Terminals
 
-For TTY processes, you can open a bidirectional WebSocket for full terminal access.
+Create a process with `tty: true` to allocate a pseudo-terminal, then connect via WebSocket for full bidirectional I/O.
+
+```ts TypeScript
+const proc = await sdk.createProcess({
+  command: "bash",
+  tty: true,
+});
+```
 
 ### Write input
 
@@ -200,52 +197,40 @@ curl -X POST "http://127.0.0.1:2468/v1/processes/proc_1/input" \
 ```
 </CodeGroup>
 
-### Resize terminal
+### Connect to a terminal
 
-<CodeGroup>
-```ts TypeScript
-await sdk.resizeProcessTerminal("proc_1", {
-  cols: 120,
-  rows: 40,
-});
-```
-
-```bash cURL
-curl -X POST "http://127.0.0.1:2468/v1/processes/proc_1/terminal/resize" \
-  -H "Content-Type: application/json" \
-  -d '{"cols":120,"rows":40}'
-```
-</CodeGroup>
-
-### WebSocket terminal
-
-Open a WebSocket for bidirectional PTY I/O. The server sends raw terminal output as binary frames and JSON control frames (`ready`, `exit`, `error`). The client sends JSON frames for `input`, `resize`, and `close`.
+Use `ProcessTerminalSession` unless you need direct frame access.
 
 ```ts TypeScript
-const ws = sdk.connectProcessTerminalWebSocket("proc_1");
+const terminal = sdk.connectProcessTerminal("proc_1");
 
-ws.binaryType = "arraybuffer";
-
-ws.addEventListener("message", (event) => {
-  if (typeof event.data === "string") {
-    const frame = JSON.parse(event.data);
-    // { type: "ready" } | { type: "exit", exitCode: 0 } | { type: "error", message: "..." }
-    console.log("control:", frame);
-  } else {
-    // Raw PTY output
-    const text = new TextDecoder().decode(event.data);
-    process.stdout.write(text);
-  }
+terminal.onReady(() => {
+  terminal.resize({ cols: 120, rows: 40 });
+  terminal.sendInput("ls\n");
 });
 
-// Send input
-ws.send(JSON.stringify({ type: "input", data: "ls\n" }));
+terminal.onData((bytes) => {
+  process.stdout.write(new TextDecoder().decode(bytes));
+});
 
-// Resize
-ws.send(JSON.stringify({ type: "resize", cols: 120, rows: 40 }));
+terminal.onExit((status) => {
+  console.log("exit:", status.exitCode);
+});
+
+terminal.onError((error) => {
+  console.error(error instanceof Error ? error.message : error.message);
+});
+
+terminal.onClose(() => {
+  console.log("terminal closed");
+});
 ```
 
 Since the browser WebSocket API cannot send custom headers, the endpoint accepts an `access_token` query parameter for authentication. The SDK handles this automatically.
+
+### Browser terminal emulators
+
+The terminal session works with any browser terminal emulator like ghostty-web or xterm.js. For a complete example using ghostty-web, see the [Inspector's GhosttyTerminal component](https://github.com/rivet-dev/sandbox-agent/blob/be32cf04a250512e73a0ffdb5f7e759accfc1c47/frontend/packages/inspector/src/components/processes/GhosttyTerminal.tsx).
 
 ## Configuration
 
