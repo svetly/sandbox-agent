@@ -679,14 +679,23 @@ export class SandboxAgent {
     live.bindSession(record.id, record.agentSessionId);
     let session = this.upsertSessionHandle(record);
 
-    if (request.mode) {
-      session = (await this.setSessionMode(session.id, request.mode)).session;
-    }
-    if (request.model) {
-      session = (await this.setSessionModel(session.id, request.model)).session;
-    }
-    if (request.thoughtLevel) {
-      session = (await this.setSessionThoughtLevel(session.id, request.thoughtLevel)).session;
+    try {
+      if (request.mode) {
+        session = (await this.setSessionMode(session.id, request.mode)).session;
+      }
+      if (request.model) {
+        session = (await this.setSessionModel(session.id, request.model)).session;
+      }
+      if (request.thoughtLevel) {
+        session = (await this.setSessionThoughtLevel(session.id, request.thoughtLevel)).session;
+      }
+    } catch (err) {
+      try {
+        await this.destroySession(session.id);
+      } catch {
+        // Best-effort cleanup
+      }
+      throw err;
     }
 
     return session;
@@ -728,14 +737,23 @@ export class SandboxAgent {
     const existing = await this.persist.getSession(request.id);
     if (existing) {
       let session = await this.resumeSession(existing.id);
-      if (request.mode) {
-        session = (await this.setSessionMode(session.id, request.mode)).session;
-      }
-      if (request.model) {
-        session = (await this.setSessionModel(session.id, request.model)).session;
-      }
-      if (request.thoughtLevel) {
-        session = (await this.setSessionThoughtLevel(session.id, request.thoughtLevel)).session;
+      try {
+        if (request.mode) {
+          session = (await this.setSessionMode(session.id, request.mode)).session;
+        }
+        if (request.model) {
+          session = (await this.setSessionModel(session.id, request.model)).session;
+        }
+        if (request.thoughtLevel) {
+          session = (await this.setSessionThoughtLevel(session.id, request.thoughtLevel)).session;
+        }
+      } catch (err) {
+        try {
+          await this.destroySession(session.id);
+        } catch {
+          // Best-effort cleanup
+        }
+        throw err;
       }
       return session;
     }
@@ -743,7 +761,11 @@ export class SandboxAgent {
   }
 
   async destroySession(id: string): Promise<Session> {
-    await this.sendSessionMethodInternal(id, SESSION_CANCEL_METHOD, {}, {}, true);
+    try {
+      await this.sendSessionMethodInternal(id, SESSION_CANCEL_METHOD, {}, {}, true);
+    } catch {
+      // Best-effort: agent may already be gone
+    }
     const existing = await this.requireSessionRecord(id);
 
     const updated: SessionRecord = {

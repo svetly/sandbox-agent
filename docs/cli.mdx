@@ -200,13 +200,22 @@ Example output:
       "models": {
         "currentValue": "default",
         "values": [
-          { "value": "default", "name": "Default (recommended)" },
-          { "value": "opus", "name": "Opus" },
+          { "value": "default", "name": "Default" },
           { "value": "sonnet", "name": "Sonnet" },
+          { "value": "opus", "name": "Opus" },
           { "value": "haiku", "name": "Haiku" }
         ]
       },
-      "modes": { "values": [] },
+      "modes": {
+        "currentValue": "default",
+        "values": [
+          { "value": "default", "name": "Default" },
+          { "value": "acceptEdits", "name": "Accept Edits" },
+          { "value": "plan", "name": "Plan" },
+          { "value": "dontAsk", "name": "Don't Ask" },
+          { "value": "bypassPermissions", "name": "Bypass Permissions" }
+        ]
+      },
       "thoughtLevels": { "values": [] }
     }
   ]
