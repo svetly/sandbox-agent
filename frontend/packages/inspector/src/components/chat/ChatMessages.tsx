@@ -3,6 +3,7 @@ import { getMessageClass } from "./messageUtils";
 import type { TimelineEntry } from "./types";
 import { AlertTriangle, ChevronRight, ChevronDown, Wrench, Brain, Info, ExternalLink, PlayCircle } from "lucide-react";
 import MarkdownText from "./MarkdownText";
+import { assetUrl } from "../../lib/ui-base";
 
 const ToolItem = ({
   entry,
@@ -171,11 +172,11 @@ const ToolGroup = ({ entries, onEventClick }: { entries: TimelineEntry[]; onEven
 };
 
 const agentLogos: Record<string, string> = {
-  claude: `${import.meta.env.BASE_URL}logos/claude.svg`,
-  codex: `${import.meta.env.BASE_URL}logos/openai.svg`,
-  opencode: `${import.meta.env.BASE_URL}logos/opencode.svg`,
-  amp: `${import.meta.env.BASE_URL}logos/amp.svg`,
-  pi: `${import.meta.env.BASE_URL}logos/pi.svg`,
+  claude: assetUrl("logos/claude.svg"),
+  codex: assetUrl("logos/openai.svg"),
+  opencode: assetUrl("logos/opencode.svg"),
+  amp: assetUrl("logos/amp.svg"),
+  pi: assetUrl("logos/pi.svg"),
 };
 
 const ChatMessages = ({

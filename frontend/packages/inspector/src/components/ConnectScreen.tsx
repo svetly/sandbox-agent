@@ -1,7 +1,8 @@
 import { AlertTriangle, BookOpen, Zap } from "lucide-react";
 import { isHttpsToHttpConnection, isLocalNetworkTarget } from "../lib/permissions";
+import { assetUrl } from "../lib/ui-base";
 
-const logoUrl = `${import.meta.env.BASE_URL}logos/sandboxagent.svg`;
+const logoUrl = assetUrl("logos/sandboxagent.svg");
 
 const ConnectScreen = ({
   endpoint,

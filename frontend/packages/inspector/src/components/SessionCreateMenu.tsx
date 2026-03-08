@@ -1,6 +1,7 @@
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AgentInfo } from "sandbox-agent";
+import { assetUrl } from "../lib/ui-base";
 
 type AgentModeInfo = { id: string; name: string; description: string };
 type AgentModelInfo = { id: string; name?: string };
@@ -29,11 +30,11 @@ const agentLabels: Record<string, string> = {
 };
 
 const agentLogos: Record<string, string> = {
-  claude: `${import.meta.env.BASE_URL}logos/claude.svg`,
-  codex: `${import.meta.env.BASE_URL}logos/openai.svg`,
-  opencode: `${import.meta.env.BASE_URL}logos/opencode.svg`,
-  amp: `${import.meta.env.BASE_URL}logos/amp.svg`,
-  pi: `${import.meta.env.BASE_URL}logos/pi.svg`,
+  claude: assetUrl("logos/claude.svg"),
+  codex: assetUrl("logos/openai.svg"),
+  opencode: assetUrl("logos/opencode.svg"),
+  amp: assetUrl("logos/amp.svg"),
+  pi: assetUrl("logos/pi.svg"),
 };
 
 function normalizeCwd(value: string | null | undefined) {

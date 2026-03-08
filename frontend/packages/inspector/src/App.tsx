@@ -29,6 +29,7 @@ import DebugPanel, { type DebugTab } from "./components/debug/DebugPanel";
 import SessionSidebar from "./components/SessionSidebar";
 import type { RequestLog } from "./types/requestLog";
 import { buildCurl } from "./utils/http";
+import { assetUrl, getServerBaseUrl, getUiBasePath } from "./lib/ui-base";
 
 const flattenSelectOptions = (
   options: ConfigSelectOption[] | Array<{ group: string; name: string; options: ConfigSelectOption[] }>
@@ -38,7 +39,7 @@ const flattenSelectOptions = (
   return (options as Array<{ options: ConfigSelectOption[] }>).flatMap((g) => g.options);
 };
 
-const logoUrl = `${import.meta.env.BASE_URL}logos/sandboxagent.svg`;
+const logoUrl = assetUrl("logos/sandboxagent.svg");
 const defaultAgents = ["claude", "codex", "opencode", "amp", "pi", "cursor"];
 
 type ErrorToast = {
@@ -63,10 +64,7 @@ const SESSION_MODELS_KEY = "sandbox-agent-inspector-session-models";
 const DEFAULT_ENDPOINT = "http://localhost:2468";
 
 const getCurrentOriginEndpoint = () => {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  return window.location.origin;
+  return getServerBaseUrl();
 };
 
 const getErrorMessage = (error: unknown, fallback: string) => {
@@ -142,7 +140,7 @@ const shouldIgnoreGlobalError = (value: unknown): boolean => {
 };
 
 const getSessionIdFromPath = (): string => {
-  const basePath = import.meta.env.BASE_URL;
+  const basePath = getUiBasePath();
   const path = window.location.pathname;
   const relative = path.startsWith(basePath) ? path.slice(basePath.length) : path;
   const match = relative.match(/^sessions\/(.+)/);
@@ -194,7 +192,7 @@ const getPersistedSessionModels = (): Record<string, string> => {
 };
 
 const updateSessionPath = (id: string) => {
-  const basePath = import.meta.env.BASE_URL;
+  const basePath = getUiBasePath();
   const params = window.location.search;
   const newPath = id ? `${basePath}sessions/${id}${params}` : `${basePath}${params}`;
   if (window.location.pathname + window.location.search !== newPath) {
