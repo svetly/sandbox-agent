@@ -22,10 +22,14 @@ const ChatInput = ({
     const textarea = textareaRef.current;
     if (!textarea) return;
 
+    const styles = window.getComputedStyle(textarea);
+    const parsedMaxHeight = Number.parseFloat(styles.maxHeight);
+    const maxHeight = Number.isFinite(parsedMaxHeight) ? parsedMaxHeight : 200;
+
     textarea.style.height = "0px";
-    const nextHeight = Math.min(textarea.scrollHeight, 200);
+    const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
     textarea.style.height = `${Math.max(nextHeight, 22)}px`;
-    textarea.style.overflowY = textarea.scrollHeight > 200 ? "auto" : "hidden";
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
   }, [message]);
 
   return (

@@ -545,8 +545,9 @@
       }
 
       html.ui-mod-enabled .input-wrapper textarea {
+        --chat-input-max-height: 33.3333vh;
         min-height: 22px;
-        max-height: 200px;
+        max-height: var(--chat-input-max-height);
         overflow-y: hidden;
       }
 
