@@ -18,6 +18,10 @@ const LAST_CWD_KEY = "sandbox-agent-inspector-last-cwd";
 
 type InspectorRuntimeConfig = {
   defaultCwd?: string;
+  agentDefaults?: Record<string, {
+    model?: string;
+    mode?: string;
+  }>;
 };
 
 const agentLabels: Record<string, string> = {
@@ -46,6 +50,27 @@ function normalizeCwd(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
+function normalizeInspectorDefault(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function findMatchingOption<T extends AgentModeInfo | AgentModelInfo>(options: T[], desiredValue: string | null) {
+  if (!desiredValue) {
+    return null;
+  }
+
+  const normalizedDesired = desiredValue.trim().toLowerCase();
+  return options.find((option) => {
+    const optionName = typeof option.name === "string" ? option.name : "";
+    return option.id.toLowerCase() === normalizedDesired || optionName.trim().toLowerCase() === normalizedDesired;
+  }) ?? null;
+}
+
 function getQueryDefaultCwd() {
   if (typeof window === "undefined") {
     return null;
@@ -64,6 +89,30 @@ function getRuntimeDefaultCwd() {
     __SANDBOX_AGENT_INSPECTOR_CONFIG__?: InspectorRuntimeConfig;
   };
   return normalizeCwd(runtimeWindow.__SANDBOX_AGENT_INSPECTOR_CONFIG__?.defaultCwd);
+}
+
+function getRuntimeAgentDefault(agentId: string) {
+  if (typeof window === "undefined" || !agentId) {
+    return null;
+  }
+
+  const runtimeWindow = window as typeof window & {
+    __SANDBOX_AGENT_INSPECTOR_CONFIG__?: InspectorRuntimeConfig;
+  };
+  const defaults = runtimeWindow.__SANDBOX_AGENT_INSPECTOR_CONFIG__?.agentDefaults;
+  if (!defaults || typeof defaults !== "object") {
+    return null;
+  }
+
+  const agentDefaults = defaults[agentId];
+  if (!agentDefaults || typeof agentDefaults !== "object") {
+    return null;
+  }
+
+  return {
+    model: normalizeInspectorDefault(agentDefaults.model),
+    mode: normalizeInspectorDefault(agentDefaults.mode),
+  };
 }
 
 function getStoredCwd() {
@@ -138,7 +187,9 @@ const SessionCreateMenu = ({
     if (!selectedAgent) return;
     const modes = modesByAgent[selectedAgent];
     if (modes && modes.length > 0 && !agentMode) {
-      setAgentMode(modes[0].id);
+      const configuredMode = getRuntimeAgentDefault(selectedAgent)?.mode ?? null;
+      const matchedMode = findMatchingOption(modes, configuredMode);
+      setAgentMode(matchedMode?.id ?? modes[0].id);
     }
   }, [modesByAgent, selectedAgent, agentMode]);
 
@@ -153,17 +204,30 @@ const SessionCreateMenu = ({
   // Auto-select default model when agent is selected
   useEffect(() => {
     if (!selectedAgent) return;
-    if (selectedModel) return;
+    if (selectedModel || isCustomModel || customModel) return;
+
+    const configuredModel = getRuntimeAgentDefault(selectedAgent)?.model ?? null;
+    const models = modelsByAgent[selectedAgent] ?? [];
+    const matchedModel = findMatchingOption(models, configuredModel);
+
+    if (matchedModel) {
+      setSelectedModel(matchedModel.id);
+      return;
+    }
+
+    if (configuredModel) {
+      setIsCustomModel(true);
+      setCustomModel(configuredModel);
+      return;
+    }
+
     const defaultModel = defaultModelByAgent[selectedAgent];
     if (defaultModel) {
       setSelectedModel(defaultModel);
-    } else {
-      const models = modelsByAgent[selectedAgent];
-      if (models && models.length > 0) {
-        setSelectedModel(models[0].id);
-      }
+    } else if (models.length > 0) {
+      setSelectedModel(models[0].id);
     }
-  }, [modelsByAgent, defaultModelByAgent, selectedAgent, selectedModel]);
+  }, [modelsByAgent, defaultModelByAgent, selectedAgent, selectedModel, isCustomModel, customModel]);
 
   if (!open) return null;
 

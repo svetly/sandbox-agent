@@ -11,6 +11,7 @@ use axum::Router;
 include!(concat!(env!("OUT_DIR"), "/inspector_assets.rs"));
 
 static INSPECTOR_DEFAULT_CWD: OnceLock<String> = OnceLock::new();
+const INSPECTOR_AGENT_IDS: &[&str] = &["claude", "codex", "opencode", "amp", "pi", "cursor", "mock"];
 
 pub fn is_enabled() -> bool {
     INSPECTOR_ENABLED
@@ -97,6 +98,7 @@ fn index_response(file: &include_dir::File) -> Response {
     let html = String::from_utf8_lossy(file.contents());
     let config_json = serde_json::json!({
         "defaultCwd": resolve_default_cwd(),
+        "agentDefaults": resolve_agent_defaults(),
     })
     .to_string();
     let config_script = format!(
@@ -134,7 +136,38 @@ fn resolve_default_cwd() -> String {
         .unwrap_or_else(|| "/".to_string())
 }
 
+fn resolve_agent_defaults() -> serde_json::Value {
+    let mut defaults = serde_json::Map::new();
+
+    for agent_id in INSPECTOR_AGENT_IDS {
+        let env_prefix = format!(
+            "SANDBOX_AGENT_INSPECTOR_DEFAULT_{}",
+            agent_id.replace('-', "_").to_ascii_uppercase()
+        );
+        let model = normalize_string(std::env::var(format!("{}_MODEL", env_prefix)).ok());
+        let mode = normalize_string(std::env::var(format!("{}_MODE", env_prefix)).ok());
+
+        if model.is_none() && mode.is_none() {
+            continue;
+        }
+
+        defaults.insert(
+            (*agent_id).to_string(),
+            serde_json::json!({
+                "model": model,
+                "mode": mode,
+            }),
+        );
+    }
+
+    serde_json::Value::Object(defaults)
+}
+
 fn normalize_cwd(value: Option<String>) -> Option<String> {
+    normalize_string(value)
+}
+
+fn normalize_string(value: Option<String>) -> Option<String> {
     value.and_then(|value| {
         let trimmed = value.trim();
         if trimmed.is_empty() {
