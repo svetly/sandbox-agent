@@ -1,9 +1,24 @@
-import { AlertCircle, Loader2, PlugZap, SquareTerminal } from "lucide-react";
-import { FitAddon, Terminal, init } from "ghostty-web";
+"use client";
+
+import type { FitAddon as GhosttyFitAddon, Terminal as GhosttyTerminal } from "ghostty-web";
+import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
-import type { SandboxAgent } from "sandbox-agent";
+import type { SandboxAgent, TerminalErrorStatus, TerminalExitStatus } from "sandbox-agent";
 
 type ConnectionState = "connecting" | "ready" | "closed" | "error";
+
+export type ProcessTerminalClient = Pick<SandboxAgent, "connectProcessTerminal">;
+
+export interface ProcessTerminalProps {
+  client: ProcessTerminalClient;
+  processId: string;
+  className?: string;
+  style?: CSSProperties;
+  terminalStyle?: CSSProperties;
+  height?: number | string;
+  onExit?: (status: TerminalExitStatus) => void;
+  onError?: (error: TerminalErrorStatus | Error) => void;
+}
 
 const terminalTheme = {
   background: "#09090b",
@@ -29,15 +44,62 @@ const terminalTheme = {
   brightWhite: "#fafafa",
 };
 
-const GhosttyTerminal = ({
+const shellStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  overflow: "hidden",
+  border: "1px solid rgba(255, 255, 255, 0.1)",
+  borderRadius: 10,
+  background: "rgba(0, 0, 0, 0.3)",
+};
+
+const statusBarStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  padding: "8px 12px",
+  borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+  background: "rgba(0, 0, 0, 0.2)",
+  color: "rgba(244, 244, 245, 0.86)",
+  fontSize: 11,
+  lineHeight: 1.4,
+};
+
+const hostBaseStyle: CSSProperties = {
+  minHeight: 320,
+  padding: 10,
+  overflow: "hidden",
+};
+
+const exitCodeStyle: CSSProperties = {
+  fontFamily: "ui-monospace, SFMono-Regular, SF Mono, Menlo, monospace",
+  opacity: 0.72,
+};
+
+const getStatusColor = (state: ConnectionState): string => {
+  switch (state) {
+    case "ready":
+      return "#4ade80";
+    case "error":
+      return "#fb7185";
+    case "closed":
+      return "#fbbf24";
+    default:
+      return "rgba(244, 244, 245, 0.72)";
+  }
+};
+
+export const ProcessTerminal = ({
   client,
   processId,
+  className,
+  style,
+  terminalStyle,
+  height = 360,
   onExit,
-}: {
-  client: SandboxAgent;
-  processId: string;
-  onExit?: () => void;
-}) => {
+  onError,
+}: ProcessTerminalProps) => {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [statusMessage, setStatusMessage] = useState("Connecting to PTY...");
@@ -45,17 +107,22 @@ const GhosttyTerminal = ({
 
   useEffect(() => {
     let cancelled = false;
-    let terminal: Terminal | null = null;
-    let fitAddon: FitAddon | null = null;
-    let session: ReturnType<SandboxAgent["connectProcessTerminal"]> | null = null;
+    let terminal: GhosttyTerminal | null = null;
+    let fitAddon: GhosttyFitAddon | null = null;
+    let session: ReturnType<ProcessTerminalClient["connectProcessTerminal"]> | null = null;
     let resizeRaf = 0;
     let removeDataListener: { dispose(): void } | null = null;
     let removeResizeListener: { dispose(): void } | null = null;
+
+    setConnectionState("connecting");
+    setStatusMessage("Connecting to PTY...");
+    setExitCode(null);
 
     const syncSize = () => {
       if (!terminal || !session) {
         return;
       }
+
       session.resize({
         cols: terminal.cols,
         rows: terminal.rows,
@@ -64,12 +131,14 @@ const GhosttyTerminal = ({
 
     const connect = async () => {
       try {
-        await init();
+        const ghostty = await import("ghostty-web");
+        await ghostty.init();
+
         if (cancelled || !hostRef.current) {
           return;
         }
 
-        terminal = new Terminal({
+        terminal = new ghostty.Terminal({
           allowTransparency: true,
           cursorBlink: true,
           cursorStyle: "block",
@@ -78,9 +147,14 @@ const GhosttyTerminal = ({
           smoothScrollDuration: 90,
           theme: terminalTheme,
         });
-        fitAddon = new FitAddon();
+        fitAddon = new ghostty.FitAddon();
 
         terminal.open(hostRef.current);
+        const terminalRoot = hostRef.current.firstElementChild;
+        if (terminalRoot instanceof HTMLElement) {
+          terminalRoot.style.width = "100%";
+          terminalRoot.style.height = "100%";
+        }
         terminal.loadAddon(fitAddon);
         fitAddon.fit();
         fitAddon.observeResize();
@@ -101,14 +175,13 @@ const GhosttyTerminal = ({
         session = nextSession;
 
         nextSession.onReady((frame) => {
-          if (cancelled) {
+          if (cancelled || frame.type !== "ready") {
             return;
           }
-          if (frame.type === "ready") {
-            setConnectionState("ready");
-            setStatusMessage("Connected");
-            syncSize();
-          }
+
+          setConnectionState("ready");
+          setStatusMessage("Connected");
+          syncSize();
         });
 
         nextSession.onData((bytes) => {
@@ -119,31 +192,33 @@ const GhosttyTerminal = ({
         });
 
         nextSession.onExit((frame) => {
-          if (cancelled) {
+          if (cancelled || frame.type !== "exit") {
             return;
           }
-          if (frame.type === "exit") {
-            setConnectionState("closed");
-            setExitCode(frame.exitCode ?? null);
-            setStatusMessage(
-              frame.exitCode == null ? "Process exited." : `Process exited with code ${frame.exitCode}.`
-            );
-            onExit?.();
-          }
+
+          setConnectionState("closed");
+          setExitCode(frame.exitCode ?? null);
+          setStatusMessage(
+            frame.exitCode == null ? "Process exited." : `Process exited with code ${frame.exitCode}.`
+          );
+          onExit?.(frame);
         });
 
         nextSession.onError((error) => {
           if (cancelled) {
             return;
           }
+
           setConnectionState("error");
           setStatusMessage(error instanceof Error ? error.message : error.message);
+          onError?.(error);
         });
 
         nextSession.onClose(() => {
           if (cancelled) {
             return;
           }
+
           setConnectionState((current) => (current === "error" ? current : "closed"));
           setStatusMessage((current) => (current === "Connected" ? "Terminal disconnected." : current));
         });
@@ -151,8 +226,11 @@ const GhosttyTerminal = ({
         if (cancelled) {
           return;
         }
+
+        const nextError = error instanceof Error ? error : new Error("Failed to initialize terminal.");
         setConnectionState("error");
-        setStatusMessage(error instanceof Error ? error.message : "Failed to initialize Ghostty terminal.");
+        setStatusMessage(nextError.message);
+        onError?.(nextError);
       }
     };
 
@@ -168,27 +246,22 @@ const GhosttyTerminal = ({
       session?.close();
       terminal?.dispose();
     };
-  }, [client, onExit, processId]);
+  }, [client, onError, onExit, processId]);
 
   return (
-    <div className="process-terminal-shell">
-      <div className="process-terminal-meta">
-        <div className="inline-row">
-          <SquareTerminal size={13} />
-          <span>Ghostty PTY</span>
-        </div>
-        <div className={`process-terminal-status ${connectionState}`}>
-          {connectionState === "connecting" ? <Loader2 size={12} className="spinner-icon" /> : null}
-          {connectionState === "ready" ? <PlugZap size={12} /> : null}
-          {connectionState === "error" ? <AlertCircle size={12} /> : null}
-          <span>{statusMessage}</span>
-          {exitCode != null ? <span className="mono">exit={exitCode}</span> : null}
-        </div>
+    <div className={className} style={{ ...shellStyle, ...style }}>
+      <div style={statusBarStyle}>
+        <span style={{ color: getStatusColor(connectionState) }}>{statusMessage}</span>
+        {exitCode != null ? <span style={exitCodeStyle}>exit={exitCode}</span> : null}
       </div>
       <div
         ref={hostRef}
-        className="process-terminal-host"
         role="presentation"
+        style={{
+          ...hostBaseStyle,
+          height,
+          ...terminalStyle,
+        }}
         onClick={() => {
           hostRef.current?.querySelector("textarea")?.focus();
         }}
@@ -196,5 +269,3 @@ const GhosttyTerminal = ({
     </div>
   );
 };
-
-export default GhosttyTerminal;

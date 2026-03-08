@@ -424,9 +424,6 @@ importers:
       '@sandbox-agent/persist-indexeddb':
         specifier: workspace:*
         version: link:../../../sdks/persist-indexeddb
-      ghostty-web:
-        specifier: ^0.4.0
-        version: 0.4.0
       lucide-react:
         specifier: ^0.469.0
         version: 0.469.0(react@18.3.1)
@@ -437,6 +434,9 @@ importers:
         specifier: ^18.3.1
         version: 18.3.1(react@18.3.1)
     devDependencies:
+      '@sandbox-agent/react':
+        specifier: workspace:*
+        version: link:../../../sdks/react
       '@types/react':
         specifier: ^18.3.3
         version: 18.3.27
@@ -770,6 +770,28 @@ importers:
       vitest:
         specifier: ^3.0.0
         version: 3.2.4(@types/debug@4.1.12)(@types/node@22.19.7)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.2)
+
+  sdks/react:
+    dependencies:
+      ghostty-web:
+        specifier: ^0.4.0
+        version: 0.4.0
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.3
+        version: 18.3.27
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      sandbox-agent:
+        specifier: workspace:*
+        version: link:../typescript
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(jiti@1.21.7)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
 
   sdks/typescript:
     dependencies:
@@ -8026,14 +8048,6 @@ snapshots:
       chai: 5.3.3
       tinyrainbow: 2.0.0
 
-  '@vitest/mocker@3.2.4(vite@5.4.21(@types/node@22.19.7))':
-    dependencies:
-      '@vitest/spy': 3.2.4
-      estree-walker: 3.0.3
-      magic-string: 0.30.21
-    optionalDependencies:
-      vite: 5.4.21(@types/node@22.19.7)
-
   '@vitest/mocker@3.2.4(vite@5.4.21(@types/node@25.3.5))':
     dependencies:
       '@vitest/spy': 3.2.4
@@ -11093,7 +11107,7 @@ snapshots:
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.4
-      '@vitest/mocker': 3.2.4(vite@5.4.21(@types/node@22.19.7))
+      '@vitest/mocker': 3.2.4(vite@5.4.21(@types/node@25.3.5))
       '@vitest/pretty-format': 3.2.4
       '@vitest/runner': 3.2.4
       '@vitest/snapshot': 3.2.4

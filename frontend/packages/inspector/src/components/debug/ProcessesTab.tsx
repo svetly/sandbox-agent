@@ -1,8 +1,8 @@
 import { ChevronDown, ChevronRight, Loader2, Play, RefreshCw, Skull, SquareTerminal, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ProcessTerminal } from "@sandbox-agent/react";
 import { SandboxAgentError } from "sandbox-agent";
 import type { ProcessInfo, SandboxAgent } from "sandbox-agent";
-import GhosttyTerminal from "../processes/GhosttyTerminal";
 
 const extractErrorMessage = (error: unknown, fallback: string): string => {
   if (error instanceof SandboxAgentError && error.problem?.detail) return error.problem.detail;
@@ -390,9 +390,10 @@ const ProcessesTab = ({
 
             {/* Terminal */}
             {terminalOpen && canOpenTerminal(selectedProcess) ? (
-              <GhosttyTerminal
+              <ProcessTerminal
                 client={getClient()}
                 processId={selectedProcess.id}
+                style={{ marginTop: 4 }}
                 onExit={handleTerminalExit}
               />
             ) : canOpenTerminal(selectedProcess) ? (
