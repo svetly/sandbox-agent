@@ -8,7 +8,7 @@ import type {
 } from "sandbox-agent";
 
 const DEFAULT_DB_NAME = "sandbox-agent-session-store";
-const DEFAULT_DB_VERSION = 2;
+const DEFAULT_DB_VERSION = 3;
 const SESSIONS_STORE = "sessions";
 const EVENTS_STORE = "events";
 const EVENTS_BY_SESSION_INDEX = "by_session_index";
@@ -151,6 +151,8 @@ type SessionRow = {
   createdAt: number;
   destroyedAt?: number;
   sessionInit?: SessionRecord["sessionInit"];
+  configOptions?: SessionRecord["configOptions"];
+  modes?: SessionRecord["modes"];
 };
 
 type EventRow = {
@@ -172,6 +174,8 @@ function encodeSessionRow(session: SessionRecord): SessionRow {
     createdAt: session.createdAt,
     destroyedAt: session.destroyedAt,
     sessionInit: session.sessionInit,
+    configOptions: session.configOptions,
+    modes: session.modes,
   };
 }
 
@@ -184,6 +188,8 @@ function decodeSessionRow(row: SessionRow): SessionRecord {
     createdAt: row.createdAt,
     destroyedAt: row.destroyedAt,
     sessionInit: row.sessionInit,
+    configOptions: row.configOptions,
+    modes: row.modes,
   };
 }
 

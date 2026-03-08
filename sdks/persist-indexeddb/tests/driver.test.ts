@@ -93,4 +93,56 @@ describe("IndexedDbSessionPersistDriver", () => {
       await driver.close();
     }
   });
+
+  it("persists session config options and modes across driver instances", async () => {
+    const dbName = uniqueDbName("indexeddb-session-config");
+
+    {
+      const driver = new IndexedDbSessionPersistDriver({ databaseName: dbName });
+      await driver.updateSession({
+        id: "s-1",
+        agent: "mock",
+        agentSessionId: "a-1",
+        lastConnectionId: "c-1",
+        createdAt: 1,
+        configOptions: [
+          {
+            type: "select",
+            id: "model",
+            name: "Model",
+            category: "model",
+            currentValue: "gpt-5.4",
+            options: [{ value: "gpt-5.4", name: "GPT 5.4" }],
+          },
+          {
+            type: "select",
+            id: "mode",
+            name: "Mode",
+            category: "mode",
+            currentValue: "bypassPermissions",
+            options: [{ value: "bypassPermissions", name: "Bypass Permissions" }],
+          },
+        ],
+        modes: {
+          currentModeId: "bypassPermissions",
+          availableModes: [
+            { id: "default", name: "Default" },
+            { id: "bypassPermissions", name: "Bypass Permissions" },
+          ],
+        },
+      });
+      await driver.close();
+    }
+
+    {
+      const driver = new IndexedDbSessionPersistDriver({ databaseName: dbName });
+      const session = await driver.getSession("s-1");
+      expect(session?.configOptions?.find((option) => option.id === "model")?.currentValue).toBe("gpt-5.4");
+      expect(session?.configOptions?.find((option) => option.id === "mode")?.currentValue).toBe(
+        "bypassPermissions",
+      );
+      expect(session?.modes?.currentModeId).toBe("bypassPermissions");
+      await driver.close();
+    }
+  });
 });

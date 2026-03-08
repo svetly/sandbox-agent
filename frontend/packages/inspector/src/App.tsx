@@ -879,7 +879,7 @@ export default function App() {
             );
             if (modelOption && config.model !== modelOption.currentValue) {
               await session.send("session/set_config_option", {
-                optionId: modelOption.id,
+                configId: modelOption.id,
                 value: config.model,
               });
             }

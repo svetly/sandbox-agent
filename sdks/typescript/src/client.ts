@@ -962,7 +962,7 @@ export class SandboxAgent {
     live.bindSession(updated.id, updated.agentSessionId);
     live.queueReplay(updated.id, replayText);
 
-    return this.upsertSessionHandle(updated);
+    return this.restoreSessionConfiguration(existing, updated);
   }
 
   async resumeOrCreateSession(request: SessionResumeOrCreateRequest): Promise<Session> {
@@ -1271,6 +1271,65 @@ export class SandboxAgent {
         await this.persist.updateSession({ ...record, ...updates });
       }
     }
+  }
+
+  private async restoreSessionConfiguration(
+    previous: SessionRecord,
+    recreated: SessionRecord,
+  ): Promise<Session> {
+    let session = this.upsertSessionHandle(recreated);
+
+    const previousModeId = typeof previous.modes?.currentModeId === "string"
+      ? previous.modes.currentModeId.trim()
+      : "";
+    const recreatedModeId = typeof recreated.modes?.currentModeId === "string"
+      ? recreated.modes.currentModeId.trim()
+      : "";
+
+    if (previousModeId && previousModeId !== recreatedModeId) {
+      try {
+        session = (await this.sendSessionMethodInternal(
+          recreated.id,
+          "session/set_mode",
+          { modeId: previousModeId },
+          {},
+          false,
+        )).session;
+      } catch {
+        // Best-effort restore. Older sessions may reference modes no longer available.
+      }
+    }
+
+    for (const option of previous.configOptions ?? []) {
+      const configId = typeof option.id === "string" ? option.id.trim() : "";
+      const value = typeof option.currentValue === "string" ? option.currentValue.trim() : "";
+      if (!configId || !value || option.category === "mode") {
+        continue;
+      }
+
+      const recreatedOption = recreated.configOptions
+        ?.find((candidate) => candidate.id === option.id || candidate.category === option.category);
+      const recreatedValue = typeof recreatedOption?.currentValue === "string"
+        ? recreatedOption.currentValue.trim()
+        : "";
+      if (recreatedValue === value) {
+        continue;
+      }
+
+      try {
+        session = (await this.sendSessionMethodInternal(
+          recreated.id,
+          "session/set_config_option",
+          { configId, value },
+          {},
+          false,
+        )).session;
+      } catch {
+        // Best-effort restore. Config values can drift between agent versions.
+      }
+    }
+
+    return session;
   }
 
   onSessionEvent(sessionId: string, listener: SessionEventListener): () => void {
