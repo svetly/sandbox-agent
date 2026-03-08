@@ -14,6 +14,19 @@
         document.head.appendChild(base);
       })();
     </script>
+    <script>
+      (function() {
+        const storageKey = "sandbox-agent-inspector-ui-mod-enabled";
+        let enabled = true;
+        try {
+          const raw = window.localStorage.getItem(storageKey);
+          enabled = raw == null ? true : raw !== "false";
+        } catch {
+          enabled = true;
+        }
+        document.documentElement.classList.toggle("ui-mod-enabled", enabled);
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Sandbox Agent</title>
     <!-- Preconnect to font providers -->
@@ -493,6 +506,48 @@
 
       .main-layout.debug-collapsed {
         grid-template-columns: 200px 1fr 42px;
+      }
+
+      /* Inspector UI Mod */
+      html.ui-mod-enabled .header,
+      html.ui-mod-enabled .session-persistence-note {
+        display: none;
+      }
+
+      html.ui-mod-enabled .chat-panel {
+        min-width: 0;
+      }
+
+      html.ui-mod-enabled .messages-container {
+        display: flex;
+        flex-direction: column;
+        padding: 24px 24px 144px;
+        scroll-padding-bottom: 144px;
+      }
+
+      html.ui-mod-enabled .messages {
+        width: min(100%, 860px);
+        margin: 0 auto;
+      }
+
+      html.ui-mod-enabled .input-container {
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
+        padding: 16px 24px 20px;
+        background: linear-gradient(180deg, rgba(11, 11, 13, 0) 0%, rgba(11, 11, 13, 0.88) 24%, var(--bg) 56%);
+      }
+
+      html.ui-mod-enabled .input-wrapper {
+        width: min(100%, 860px);
+        margin: 0 auto;
+        align-items: flex-end;
+      }
+
+      html.ui-mod-enabled .input-wrapper textarea {
+        min-height: 22px;
+        max-height: 200px;
+        overflow-y: hidden;
       }
 
       /* Session Sidebar */

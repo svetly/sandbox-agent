@@ -60,6 +60,7 @@ const CREATE_SESSION_SLOW_WARNING_MS = 90_000;
 const HTTP_ERROR_EVENT = "inspector-http-error";
 const ARCHIVED_SESSIONS_KEY = "sandbox-agent-inspector-archived-sessions";
 const SESSION_MODELS_KEY = "sandbox-agent-inspector-session-models";
+const UI_MOD_ENABLED_KEY = "sandbox-agent-inspector-ui-mod-enabled";
 
 const DEFAULT_ENDPOINT = "http://localhost:2468";
 
@@ -191,6 +192,22 @@ const getPersistedSessionModels = (): Record<string, string> => {
   }
 };
 
+const getPersistedUiModEnabled = (): boolean => {
+  if (typeof window === "undefined") return true;
+  try {
+    const raw = window.localStorage.getItem(UI_MOD_ENABLED_KEY);
+    if (raw == null) return true;
+    return raw !== "false";
+  } catch {
+    return true;
+  }
+};
+
+const syncUiModDocumentState = (enabled: boolean): void => {
+  if (typeof document === "undefined") return;
+  document.documentElement.classList.toggle("ui-mod-enabled", enabled);
+};
+
 const updateSessionPath = (id: string) => {
   const basePath = getUiBasePath();
   const params = window.location.search;
@@ -286,7 +303,8 @@ export default function App() {
 
   const [debugTab, setDebugTab] = useState<DebugTab>("events");
   const [highlightedEventId, setHighlightedEventId] = useState<string | null>(null);
-  const [debugPanelCollapsed, setDebugPanelCollapsed] = useState(false);
+  const [uiModEnabled, setUiModEnabled] = useState(() => getPersistedUiModEnabled());
+  const [debugPanelCollapsed, setDebugPanelCollapsed] = useState(() => getPersistedUiModEnabled());
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -307,6 +325,34 @@ export default function App() {
       setHistoryLoadingSessionId(null);
     }
   }, [sessionId]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(UI_MOD_ENABLED_KEY, uiModEnabled ? "true" : "false");
+    } catch {
+      // Ignore storage write failures.
+    }
+    syncUiModDocumentState(uiModEnabled);
+  }, [uiModEnabled]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.shiftKey) return;
+      if (!event.altKey) return;
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.code !== "KeyY") return;
+      event.preventDefault();
+      setUiModEnabled((prev) => !prev);
+    };
+
+    window.addEventListener("keydown", handleShortcut, { capture: true });
+    return () => window.removeEventListener("keydown", handleShortcut, { capture: true });
+  }, []);
+
+  useEffect(() => {
+    setDebugPanelCollapsed(uiModEnabled);
+  }, [uiModEnabled]);
 
   const logRequest = useCallback((entry: RequestLog) => {
     setRequestLog((prev) => {
@@ -1588,7 +1634,7 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app ${uiModEnabled ? "ui-mod-enabled" : ""}`}>
       <header className="header">
         <div className="header-left">
           <img src={logoUrl} alt="Sandbox Agent" className="logo-text" style={{ height: '20px', width: 'auto' }} />
